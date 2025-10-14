@@ -1,0 +1,12 @@
+Package: ABCD
+Title: What the Package Does (One Line, Title Case)
+Version: 0.0.0.9000
+Authors@R: 
+    person("Alan", "Moore", , "alancm@iastate.edu", role = c("aut", "cre"))
+Description: This package implements the ABCD change-point method from the corresponding paper "Adaptive Block-Based Change-Point Detection for Sparse Spatially Clustered Data with Applications in Remote Sensing Imaging" (2025).  This method focuses on detecting change-points which are spatially clustered in some Euclidean space. This works by dividing the time series up in space into blocking structures with a range of block sizes to capture change-points of different size with a much higher signal-to-noise ratio. The ABCD method is implemented here for high-dimensional data as well as image data.
+License: GPL (>= 3)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports: 
+    ade4
