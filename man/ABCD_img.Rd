@@ -49,3 +49,21 @@ This function implements the change-point method ABCD from the corresponding pap
 on a given time series, using a range of blocking structures to test for spatially
 clustered change-points at multiple scales
 }
+\examples{
+# Usage of ABCD_img on a scale with automatic blocking and default settings
+test <- array(data = NA, dim = c(60,70, 200))
+for(i in 1:60){
+ for(j in 1:70){
+ test[i,j,] <- rnorm(200)
+}
+}
+top_left <- c(sample(1:51, size = 1), sample(1:61, size = 1))
+for(i in top_left[1]:(top_left[1]+9)){
+for(j in top_left[2]:(top_left[2]+9)){
+  test[i,j,121:200] <- rnorm(80, sd = 1.15)
+}
+}
+
+ABCD_img(test, B = 100, perm.p=TRUE)
+
+}

@@ -25,6 +25,26 @@
 #' \item{boot_stats}{A vector of B-1 bootstrap statistics}
 #' \item{max_stats_at_change}{A vector of the maximum two-sample test statistic at tauhat_max for each blocking structure. With max_blocks_at_change, can be used to find a locational estimate of a potential change-point detected at tauhat_max.}
 #' \item{max_blocks_at_change}{A vector of the block with the maximum two-sample test statistic at tauhat_max for each blocking structure}
+#'
+#'
+#' @examples
+#' # Usage of ABCD_img on a scale with automatic blocking and default settings
+#' test <- array(data = NA, dim = c(60,70, 200))
+#' for(i in 1:60){
+#'  for(j in 1:70){
+#'  test[i,j,] <- rnorm(200)
+#' }
+#' }
+#
+#' top_left <- c(sample(1:51, size = 1), sample(1:61, size = 1))
+#' for(i in top_left[1]:(top_left[1]+9)){
+#' for(j in top_left[2]:(top_left[2]+9)){
+#'   test[i,j,121:200] <- rnorm(80, sd = 1.15)
+#' }
+#' }
+#'
+#' ABCD_img(test, B = 100, perm.p=TRUE)
+#'
 #' @export
 #'
 ABCD_img <-function(y, P_1_grid = NULL, P_2_grid = NULL, k = NULL, B = 500,

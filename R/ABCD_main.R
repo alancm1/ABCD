@@ -21,9 +21,31 @@
 #' \item{tauhat_cols}{A length(P_grid) by 2 matrix of the time of maximum scan statistic within each blocking structure}
 #' \item{tauhat_maxes}{A vector of the maximum scan statistic value within each blocking structure}
 #' \item{boot_stats}{A vector of B-1 bootstrap statistics}
+#'
+#' @examples
+#' # Usage of ABCD with automatic blocking and default settings
+#' test <- matrix(NA, nrow = 501, ncol = 200)
+#' for(i in 1:450){
+#'    test[i,] <- rnorm(200)
+#' }
+#' for(i in 451:501){
+#'   test[i,] <- c(rnorm(120), rnorm(80, 1/5))
+#' }
+#' ABCD(t(test), perm.p=TRUE, B = 500)
+#'
+#' # Usage of ABCD with specific blocking, choice of k, B
+#' test <- matrix(NA, nrow = 501, ncol = 200)
+#' for(i in 1:450){
+#'    test[i,] <- rnorm(200)
+#' }
+#' for(i in 451:501){
+#'   test[i,] <- c(rnorm(120), rnorm(80, sd = 1.1))
+#' }
+#' ABCD(t(test), k = 40, P_grid = c(1, 4, 9, 21, 30), B = 200, perm.p=TRUE)
+#'
 #' @export
 ABCD <-function(y, P_grid = NULL, k = NULL, B = 500,
-                n0 = NULL, n1 = NULL, perm.p = F,
+                n0 = NULL, n1 = NULL, perm.p = FALSE,
                 block_list_of_lists = NULL){
 
 
@@ -201,3 +223,4 @@ ABCD <-function(y, P_grid = NULL, k = NULL, B = 500,
        tauhat_cols = tauhat_cols, tauhat_inds = tauhat_inds,
        tauhat_maxes = tauhat_maxes, boot_stats = boot_stats))
 }
+

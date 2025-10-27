@@ -11,7 +11,7 @@ ABCD(
   B = 500,
   n0 = NULL,
   n1 = NULL,
-  perm.p = F,
+  perm.p = FALSE,
   block_list_of_lists = NULL
 )
 }
@@ -47,4 +47,26 @@ A list containing:
 This function implements the change-point method ABCD from the corresponding paper
 on a given time series, using a range of blocking structures to test for spatially
 clustered change-points at multiple scales
+}
+\examples{
+# Usage of ABCD with automatic blocking and default settings
+test <- matrix(NA, nrow = 501, ncol = 200)
+for(i in 1:450){
+   test[i,] <- rnorm(200)
+}
+for(i in 451:501){
+  test[i,] <- c(rnorm(120), rnorm(80, 1/5))
+}
+ABCD(t(test), perm.p=TRUE, B = 500)
+
+# Usage of ABCD with specific blocking, choice of k, B
+test <- matrix(NA, nrow = 501, ncol = 200)
+for(i in 1:450){
+   test[i,] <- rnorm(200)
+}
+for(i in 451:501){
+  test[i,] <- c(rnorm(120), rnorm(80, sd = 1.1))
+}
+ABCD(t(test), k = 40, P_grid = c(1, 4, 9, 21, 30), B = 200, perm.p=TRUE)
+
 }
