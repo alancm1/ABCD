@@ -1,0 +1,327 @@
+---
+title: "simulation_testing"
+author: "Alan Moore"
+date: "2024-11-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Reading in all necessary helper scripts:
+
+```{r}
+source("~/abcd_fns_clean_s.R")
+source("~/abcd_sim_helpers_s.R")
+source("~/image_sim_helpers_s.R")
+```
+
+```{r}
+# Used for plotting
+library(wesanderson)
+```
+
+**Monte Carlo Trials**
+
+```{r, cache =T, eval =F}
+# MC trials for IID Gaussian Data, n = 200, d = 1000
+MC_nulls_norm <- MC_null_stats(data_type = "Normal", N = 10000)
+```
+
+```{r, eval=F}
+# Saving null simulations, if desired...
+write.csv(MC_nulls_norm[[1]], "/filepath/ABCD_norm_MC_stats.csv")
+write.csv(MC_nulls_norm[[2]], "/filepath/inspect_norm_MC_stats.csv")
+write.csv(MC_nulls_norm[[3]], "/filepath/DC_norm_MC_stats.csv")
+write.csv(MC_nulls_norm[[4]], "/filepath/SCAN_norm_MC_stats.csv")
+```
+
+```{r, cache =T, eval =F}
+# MC trials for Spatially Dependent Gaussian Data, n = 200, d = 1000
+MC_nulls_covnorm <- MC_null_stats(data_type = "Normal_cov", N = 10000)
+```
+
+```{r,eval=F}
+write.csv(MC_nulls_covnorm[[1]], "/filepath/ABCD_covnorm_MC_stats.csv")
+write.csv(MC_nulls_covnorm[[2]], "/filepath/inspect_covnorm_MC_stats.csv")
+write.csv(MC_nulls_covnorm[[3]], "/filepath/DC_covnorm_MC_stats.csv")
+write.csv(MC_nulls_covnorm[[4]], "/filepath/SCAN_covnorm_MC_stats.csv")
+```
+
+```{r, cache =T, eval =F}
+# MC trials for IID Multivariate Lognormal Data, n = 200, d = 1000
+MC_nulls_lognorm <- MC_null_stats(data_type = "Lognormal", N = 10000)
+```
+
+```{r, eval =F}
+write.csv(MC_nulls_lognorm[[1]], "/filepath/ABCD_lognorm_MC_stats.csv")
+write.csv(MC_nulls_lognorm[[2]], "/filepath/inspect_lognorm_MC_stats.csv")
+write.csv(MC_nulls_lognorm[[3]], "/filepath/DC_lognorm_MC_stats.csv")
+write.csv(MC_nulls_lognorm[[4]], "/filepath/SCAN_lognorm_MC_stats.csv")
+```
+
+```{r, cache =T, eval =F}
+# MC trials for IID t_3-distributed Data, n = 200, d = 1000
+MC_nulls_t3 <- MC_null_stats(data_type = "t3", N = 10000)
+```
+
+```{r, eval =F}
+write.csv(MC_nulls_t3[[1]], "/filepath/ABCD_t3_MC_stats.csv")
+write.csv(MC_nulls_t3[[2]], "/filepath/inspect_t3_MC_stats.csv")
+write.csv(MC_nulls_t3[[3]], "/filepath/DC_t3_MC_stats.csv")
+write.csv(MC_nulls_t3[[4]], "/filepath/SCAN_t3_MC_stats.csv")
+```
+
+
+# Tests of Helper Functions
+
+A few tests for a variety of settings/methods, making sure everything is working properly.
+
+Normal w/ change in mean, Inspect simulation:
+
+```{r, eval =F}
+test_data<- data_gen(ch_dims = 25, data_type = "Normal")
+
+ins_mats <- single_sim(sim_dfs = test_data, method = "Inspect", change_type = "mean")
+head(ins_mats$stat_mat)
+head(ins_mats$chpt_mat)
+```
+
+Normal w/ change in variance, Inspect simulation:
+
+```{r, eval =F}
+test_data<- data_gen(ch_dims = 25, data_type = "Normal_var")
+
+ins_mats <- single_sim(sim_dfs = test_data, method = "Inspect", change_type = "mean")
+head(ins_mats$stat_mat)
+head(ins_mats$chpt_mat)
+```
+
+t3 w/ change in variance, DC simulation:
+
+```{r, eval =F}
+test_data <- data_gen(ch_dims = 50, data_type = "t3")
+dc_mats <- single_sim(sim_dfs = test_data, method = "DC", change_type = "mean")
+head(dc_mats$stat_mat)
+head(dc_mats$chpt_mat)
+```
+
+Correlated Normal w/ change in mean, SCAN simulation:
+
+```{r, eval =F}
+test_data <- data_gen(ch_dims = 100, data_type = "Normal_cov")
+scan_mats <- single_sim(sim_dfs = test_data, method = "SCAN", change_type = "mean")
+head(scan_mats$stat_mat)
+head(scan_mats$chpt_mat)
+```
+
+Lognormal w/ change in mean/variance, ABCD simulation:
+
+```{r, eval =F}
+test_data<- data_gen(ch_dims = 25, data_type = "Lognormal")
+ABCD_mats <- single_sim(sim_dfs = test_data, method = "ABCD", change_type = "both")
+head(ABCD_mats$stat_mat)
+head(ABCD_mats$chpt_mat)
+```
+
+---
+
+# Full High-Dimensional Simulation Re-creation
+
+Running this generates the entire output of the high-dimensional simulations we conducted. This takes several hours to run.
+
+```{r}
+set.seed(1234)
+sim_results_entire <- entire_sim(N = 10000, use_old_mc_trials=T)
+```
+
+# Full Data Scenario Plots
+
+All plots found in the Section 4.1 are re-created below from the simulation output from sim_results_entire:
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[1]]$plot25
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[1]]$plot50
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[1]]$plot100
+```
+
+```{r}
+sim_results_entire[[1]]$null_t1plot
+```
+
+
+```{r}
+null_df <- sim_results_entire[[1]]$null_t1plot$data
+null_df[null_df$alpha == 0.01,]
+null_df[null_df$alpha == 0.05,]
+null_df[null_df$alpha == 0.1,]
+```
+
+---
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[2]]$plot25
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[2]]$plot50
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[2]]$plot100
+```
+
+```{r}
+sim_results_entire[[2]]$null_t1plot
+```
+
+```{r}
+null_df <- sim_results_entire[[2]]$null_t1plot$data
+null_df[null_df$alpha == 0.01,]
+null_df[null_df$alpha == 0.05,]
+null_df[null_df$alpha == 0.1,]
+```
+
+---
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[3]]$plot25
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[3]]$plot50
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[3]]$plot100
+```
+
+```{r}
+sim_results_entire[[3]]$null_t1plot
+```
+
+```{r}
+null_df <- sim_results_entire[[3]]$null_t1plot$data
+null_df[null_df$alpha == 0.01,]
+null_df[null_df$alpha == 0.05,]
+null_df[null_df$alpha == 0.1,]
+```
+
+---
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[4]]$plot25
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[4]]$plot50
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[4]]$plot100
+```
+
+```{r}
+sim_results_entire[[4]]$null_t1plot
+```
+
+```{r}
+null_df <- sim_results_entire[[4]]$null_t1plot$data
+null_df[null_df$alpha == 0.01,]
+null_df[null_df$alpha == 0.05,]
+null_df[null_df$alpha == 0.1,]
+```
+
+---
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[5]]$plot25
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[5]]$plot50
+```
+
+```{r,fig.height = 3.5, fig.width = 12}
+sim_results_entire[[5]]$plot100
+```
+
+```{r}
+sim_results_entire[[5]]$null_t1plot
+```
+
+```{r}
+null_df <- sim_results_entire[[5]]$null_t1plot$data
+null_df[null_df$alpha == 0.01,]
+null_df[null_df$alpha == 0.05,]
+null_df[null_df$alpha == 0.1,]
+```
+
+---
+
+# Image Simulation Re-creation
+
+```{r,eval=F}
+# Running multivariate standard Normal image simulation, 100 trials
+image_sim_test_norm <- image_sim(100, data_type = "Normal")
+```
+
+```{r,eval=F}
+# Creating/printing table of results for multivariate standard Gaussian image simulation
+sig_acc_norm <- sig_acc_tbl(image_sim_test_norm, 100)
+sig_acc_norm$prop_tbl
+tbl_norm <- sig_acc_norm$prop_tbl
+```
+
+```{r,eval = F}
+# Saving results, if desired
+write.csv(tbl_norm,"/filepath/normal_image_tbl.csv")
+```
+
+---
+
+```{r,eval=F}
+# Running multivariate central t_5 image simulation, 100 trials
+image_sim_test_t <- image_sim(100, data_type = "t")
+```
+
+```{r,eval=F}
+# Creating/printing table of results for multivariate central t_5 image simulation
+sig_acc_t <- sig_acc_tbl(image_sim_test_t, 100)
+sig_acc_t$prop_tbl
+tbl_t <- sig_acc_t$prop_tbl
+```
+
+```{r, eval=F}
+# Saving results, if desired
+write.csv(tbl_t,"/filepath/t_image_tbl.csv")
+```
+
+---
+
+```{r,eval=F}
+# Running multivariate spatially dependent Gaussian image simulation, 100 trials
+image_sim_test_covnorm <- image_sim(100, data_type = "Normal_cov")
+```
+
+```{r,eval=F}
+# Creating/printing table of results for multivariate  spatially dependent Gaussian image simulation
+sig_acc_covnorm <- sig_acc_tbl(image_sim_test_covnorm, 100)
+sig_acc_covnorm$prop_tbl
+tbl_covnorm <- sig_acc_covnorm$prop_tbl
+```
+
+```{r, eval = F}
+# Saving results, if desired
+write.csv(tbl_covnorm,"/filepath/covnormal_image_tbl.csv")                                                              
+```
+
+
+

@@ -1,0 +1,855 @@
+---
+title: "data_app_clean"
+author: "Alan Moore"
+date: "2024-12-03"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Necessary Packages
+
+```{r}
+library(ade4) # for mstree (k-mst) 
+library(gSeg)
+library(MASS)
+library(jpeg)
+library(raster)
+library(gplots)
+library(sf)
+library(rgee)
+library(ggplot2)
+library(lubridate)
+library(rgeeExtra)
+library(InspectChangepoint)
+library(factorcpt)
+library(dplyr)
+```
+
+```{r}
+# Reading in ABCD functions, needing the ABCD image function in particular for this data application
+source("~/abcd_fns_clean.R")
+```
+
+# Data Collection for Natanz Nuclear Site using GEE
+
+```{r, eval = F}
+# Defines the latitude, longitude, and the size of the rectangular region we're investigating
+lon_left <- 51.712128
+lat_low <- 33.704167
+lon_right <- 51.734703
+lat_high <- 33.714108
+
+# Creates a rectangle in Google Earth Engine, which we set to be our area of interest
+point <- ee$Geometry$Rectangle(lon_left, lat_low, lon_right, lat_high)
+aoi <- point
+
+# Specify the time range for the image collection
+start_date <- "2019-12-18"  
+end_date <- "2024-07-31"
+
+# Load the Sentinel 2 collection, looking at just 3 bands over this period for now
+natanz <- ee$ImageCollection("COPERNICUS/S2")$select("B2", "B3", "B4") %>% #
+  ee$ImageCollection$filterDate(start_date, end_date) %>%  # Filter by date
+  ee$ImageCollection$filterBounds(aoi) %>%# Filter by the region specified above
+  ee$ImageCollection$filter(ee$Filter$lt('CLOUDY_PIXEL_PERCENTAGE', 4)) 
+ # Filtering out any images with 4% or more estimated cloud cover
+
+ee_print(natanz)
+```
+
+```{r, eval = F}
+# Call this to get .tifs of the image collection downloaded to a Google Drive Folder:
+ee_imagecollection_to_local(
+  ic = natanz,
+  region = aoi,
+  container = "natanz",
+  dsn = "img_",
+  scale = 10,
+  timePrefix = F,
+  add_metadata = F
+)
+```
+
+```{r, eval = F}
+# Gets the number of images in the collection
+natanz_images <- natanz$size()$getInfo()
+
+# Converts the ImageCollection to a list of images
+natanz_image_list <- natanz$toList(natanz_images)
+
+# Obtaining metadata for each image in the image series
+natanz_image_list_stuff <- natanz_image_list$getInfo()
+
+# Code for saving ID of each image (which includes the date each was captured)
+image_ids <- c()
+for(i in 1:335){
+  id <- natanz_image_list_stuff[[i]]$id
+  image_ids <-c(image_ids, strsplit(id, split = "/")[[1]][3])
+}
+
+write.csv(image_ids, "/Users/alanmoore/Desktop/natanz_image_ids2.csv")
+```
+
+```{r}
+image_ids <- read.csv("/Users/alanmoore/Desktop/natanz_image_ids2.csv")$x
+```
+
+# Reading In Data Locally
+
+```{r}
+h <- 112 # number of rows in each image
+w <- 211 # number of columns in each image
+leng <- 335 # number of total observations in the image series
+b2_array <- array(NA, dim = c(h, w, leng)) # creating an array of the appropriate dimensions
+for(i in 1:leng){
+  image_id <- image_ids[i]
+  img_rast <- raster(paste(paste("/Users/alanmoore/Desktop/natanz2/img_", image_id, sep = ""),
+                         ".tif", sep = ""), band = 1)
+  img_df <-as.data.frame(img_rast)
+  img_mat <- matrix(data = as.numeric(img_df[,1]), ncol = w, byrow=T)
+  b2_array[,,i] <- img_mat
+}
+
+b3_array <- array(NA, dim =c(h, w, leng))
+for(i in 1:leng){
+  image_id <- image_ids[i]
+  img_rast <- raster(paste(paste("/Users/alanmoore/Desktop/natanz2/img_", image_id, sep = ""),
+                         ".tif", sep = ""), band = 2)
+  img_df <-as.data.frame(img_rast)
+  img_mat <- matrix(data = as.numeric(img_df[,1]), ncol = w, byrow=T)
+  b3_array[,,i] <- img_mat
+}
+
+b4_array <- array(NA, dim = c(h, w, leng))
+for(i in 1:leng){
+  image_id <- image_ids[i]
+  img_rast <- raster(paste(paste("/Users/alanmoore/Desktop/natanz2/img_", image_id, sep = ""),
+                         ".tif", sep = ""), band = 3)
+  img_df <-as.data.frame(img_rast)
+  img_mat <- matrix(data = as.numeric(img_df[,1]), ncol = w, byrow=T)
+  b4_array[,,i] <- img_mat
+}
+```
+
+```{r}
+# Code for obtaining the date each image was taken from the corresponding image ID
+dates <- c()
+for(i in 1:335){
+  dates <- c(dates, substr(image_ids[i], start = 1, stop = 8))
+}
+dates <- ymd(dates)
+#dates
+```
+
+**Time-stamps of Google Earth Pro reference images:**
+
+We see apparent changes in structures in Google Earth Pro at the following dates:
+
+2019-12-18, 2020-12-29, 2022-01-25, 2022-12-22, 2023-09-16. 
+
+These are important for determining the manual labelling of our binary array representing constructions over time.
+
+---
+
+**Labelling Procedure**
+
+Using the Google Earth reference images, I have manually drawn out polygons for each Google Earth image which represent the locations of areas of construction such as buildings, roads or paved areas. We load in these polygons as .shp files below. We can then use the raster package to generate an array of 1s and 0s at the same resolution as Sentinel-2 images, with 1 representing a pixel including construction, and 0 representing a pixel without construction.
+
+**Polygons**
+
+```{r}
+# This is the main road in the image, present for the entire series
+
+# From the beginning of the time series (12/18/2019), observation 1
+poly1 <- st_read("/Users/alanmoore/Desktop/natanz_gons/1/Natanz_Right_Road-polygon.shp")
+poly2 <- st_read("/Users/alanmoore/Desktop/natanz_gons/2/Faint_crossroads_2019-polygon.shp")
+
+# Known to exist from  (12/28/2020), observation 52
+poly3 <- st_read("/Users/alanmoore/Desktop/natanz_gons/3/new_roads_12_2020-polygon.shp")
+poly4 <- st_read("/Users/alanmoore/Desktop/natanz_gons/4/mound_12_2020-polygon.shp")
+
+# Known to exist from observation 132
+poly5 <- st_read("/Users/alanmoore/Desktop/natanz_gons/5/development_1_2022.1-polygon.shp")
+poly6 <- st_read("/Users/alanmoore/Desktop/natanz_gons/6/development_1_2022.2-polygon.shp")
+
+# Known to exist from observation 210
+poly7 <- st_read("/Users/alanmoore/Desktop/natanz_gons/7/development_12_2022.1-polygon.shp")
+poly8 <- st_read("/Users/alanmoore/Desktop/natanz_gons/8/development_12_2022.2-polygon.shp")
+
+## Known to exist from observation 271
+poly9 <- st_read("/Users/alanmoore/Desktop/natanz_gons/9/development_9_2023.1-polygon.shp")
+poly10 <- st_read("/Users/alanmoore/Desktop/natanz_gons/10/right_road_9_2023-polygon.shp")
+```
+
+```{r}
+# a Sentinel-2 reference for how many pixels there should be for each "label image" based on a single Sentinel 2 image
+# (all Sentinel-2 images are of the same dimension)
+ref_img <- raster(paste(paste("/Users/alanmoore/Desktop/natanz2/img_",
+                                image_ids[1], sep = ""),".tif", sep = ""), band = 1)
+
+# Lining up construction polygons with reference Sentinel image
+poly1 <- st_transform(poly1, crs(ref_img)) 
+poly2 <- st_transform(poly2, crs(ref_img)) 
+poly3 <- st_transform(poly3, crs(ref_img)) 
+poly4 <- st_transform(poly4, crs(ref_img)) 
+poly5 <- st_transform(poly5, crs(ref_img)) 
+poly6 <- st_transform(poly6, crs(ref_img)) 
+poly7 <- st_transform(poly7, crs(ref_img)) 
+poly8 <- st_transform(poly8, crs(ref_img)) 
+poly9 <- st_transform(poly9, crs(ref_img)) 
+poly10 <- st_transform(poly10, crs(ref_img)) 
+
+# Buffering just the polygons representing roads slightly, to make sure their
+# labelings don't have gaps (which occured if they were un-buffered)
+poly1 <- st_buffer(poly1, dist = 1.5)
+poly2 <- st_buffer(poly2, dist = 1.5)
+poly3 <- st_buffer(poly3, dist = 1.5)
+poly6 <- st_buffer(poly6, dist = 1.5)
+poly8 <- st_buffer(poly8, dist = 1.5)
+poly9 <- st_buffer(poly9, dist = 1.5)
+
+# Creating raster masks for each polygon representing construction
+mask_raster1 <- rasterize(poly1, ref_img, field=1, background=0)
+mask_raster2 <- rasterize(poly2, ref_img, field=1, background=0)
+mask_raster3 <- rasterize(poly3, ref_img, field=1, background=0)
+mask_raster4 <- rasterize(poly4, ref_img, field=1, background=0)
+mask_raster5 <- rasterize(poly5, ref_img, field=1, background=0)
+mask_raster6 <- rasterize(poly6, ref_img, field=1, background=0)
+mask_raster7 <- rasterize(poly7, ref_img, field=1, background=0)
+mask_raster8 <- rasterize(poly8, ref_img, field=1, background=0)
+mask_raster9 <- rasterize(poly9, ref_img, field=1, background=0)
+mask_raster10 <- rasterize(poly10, ref_img, field=1, background=0)
+
+mask_df1 <-as.data.frame(mask_raster1)
+mask_df2 <-as.data.frame(mask_raster2)
+mask_df3 <-as.data.frame(mask_raster3)
+mask_df4 <-as.data.frame(mask_raster4)
+mask_df5 <-as.data.frame(mask_raster5)
+mask_df6 <-as.data.frame(mask_raster6)
+mask_df7 <-as.data.frame(mask_raster7)
+mask_df8 <-as.data.frame(mask_raster8)
+mask_df9 <-as.data.frame(mask_raster9)
+mask_df10 <-as.data.frame(mask_raster10)
+
+# Creating a label matrix of 1s and 0s for each polygon, which we will then combine over time
+mask_mat1 <- matrix(data = as.numeric(mask_df1[,1]), ncol = w, byrow=T)
+mask_mat2 <- matrix(data = as.numeric(mask_df2[,1]), ncol = w, byrow=T)
+mask_mat3 <- matrix(data = as.numeric(mask_df3[,1]), ncol = w, byrow=T)
+mask_mat4 <- matrix(data = as.numeric(mask_df4[,1]), ncol = w, byrow=T)
+mask_mat5 <- matrix(data = as.numeric(mask_df5[,1]), ncol = w, byrow=T)
+mask_mat6 <- matrix(data = as.numeric(mask_df6[,1]), ncol = w, byrow=T)
+mask_mat7 <- matrix(data = as.numeric(mask_df7[,1]), ncol = w, byrow=T)
+mask_mat8 <- matrix(data = as.numeric(mask_df8[,1]), ncol = w, byrow=T)
+mask_mat9 <- matrix(data = as.numeric(mask_df9[,1]), ncol = w, byrow=T)
+mask_mat10 <- matrix(data = as.numeric(mask_df10[,1]), ncol = w, byrow=T)
+
+# Code to generate heatmaps of what the above label matrices for each polygon look like
+#heatmap.2(mask_mat1, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat2, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat3, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat4, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat5, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat6, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat7, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat8, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat9, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+#heatmap.2(mask_mat10, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+```
+
+**Building label matrix**
+
+```{r}
+# Labels for observations 1-51 (the second Google image is taken between observations 51 and 52)
+start_mat <- matrix(data = NA, nrow = h, ncol = w)
+for(i in 1:h){
+  for(j in 1:w){
+    start_mat[i,j] <- max(mask_mat1[i,j], mask_mat2[i,j])
+  }
+}
+
+# Matrix of labels for times observations 52-131 (the third Google image is taken between observations 131 and 132)
+int_mat1 <- matrix(data = NA,  nrow = h, ncol = w)
+for(i in 1:h){
+  for(j in 1:w){
+    int_mat1[i,j] <- max(start_mat[i,j], mask_mat3[i,j], mask_mat4[i,j])
+  }
+}
+
+# Matrix of labels for times observations 132-209 (the fourth Google image is taken between observations 209 and 210)
+int_mat2 <- matrix(data = NA,  nrow = h, ncol = w)
+for(i in 1:h){
+  for(j in 1:w){
+    int_mat2[i,j] <- max(int_mat1[i,j], mask_mat5[i,j], mask_mat6[i,j])
+  }
+}
+
+# Matrix of labels for times observations 210-270 (the fifth Google image is taken between observations 270 and 271)
+int_mat3 <- matrix(data = NA,  nrow = h, ncol = w)
+for(i in 1:h){
+  for(j in 1:w){
+    int_mat3[i,j] <- max(int_mat2[i,j], mask_mat7[i,j], mask_mat8[i,j])
+  }
+}
+
+# Matrix of labels for times observations 271-335 (335 is the last observation in the time series)
+int_mat4 <- matrix(data = NA,  nrow = h, ncol = w)
+for(i in 1:h){
+  for(j in 1:w){
+    int_mat4[i,j] <- max(int_mat3[i,j], mask_mat9[i,j], mask_mat10[i,j])
+  }
+}
+
+# The following plots depict general build-up of construction over time
+heatmap.2(start_mat, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none', main = "Roads at Start")
+heatmap.2(int_mat1, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+heatmap.2(int_mat2, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+heatmap.2(int_mat3, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+heatmap.2(int_mat4, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none')
+```
+
+```{r}
+# Creating an array based off image construction labels, with the labels changing based on Google Earth references
+label_array <- array(NA, dim = c(h, w, leng))
+label_array[,,1:51] <- start_mat
+label_array[,,52:131] <- int_mat1
+label_array[,,132:209] <- int_mat2
+label_array[,,210:270] <- int_mat3
+label_array[,,271:leng] <- int_mat4
+```
+
+---
+
+# Robust Standardization
+
+```{r, eval = F}
+# Exploratory analysis indicating seasonality of the image-wide mean/variance of pixels, likely due to changes in temperature etc.
+mean_band_array <- array(NA, dim = c(h, w, leng))
+for(i in 1:leng){
+  mean_band_array[,,i] <- (b2_array[,,i] + b3_array[,,i] + b4_array[,,i])/ 3
+}
+
+image_means <- c()
+for(i in 1:leng){
+  image_means <- c(image_means, mean(mean_band_array[,,i]))
+}
+
+image_vars <- c()
+for(i in 1:leng){
+  image_vars <- c(image_vars, var(as.numeric(mean_band_array[,,i])))
+}
+}
+
+plot(c(image_means))
+abline(v = 132)
+plot(image_vars)
+```
+
+Below, to account for the image-wide nonstationarity in mean and variance, I have standardized each band by using the pixel MEDIAN and range from the 5% to 95% empirical quantiles of each image (since this will be more robust than using mean and variance).  
+
+```{r}
+# Standardizing per image
+b2_array_st <- array(NA, dim = c(h, w, leng))
+b3_array_st <- array(NA, dim = c(h, w, leng))
+b4_array_st <- array(NA, dim = c(h, w, leng))
+for(i in 1:leng){
+  b2_array_st[,,i] <- (b2_array[,,i] - matrix(rep(median(b2_array[,,i]), h*w), ncol = w))/ 
+    (sort(as.numeric(b2_array[,,i]))[floor(0.95*h*w)] - sort(as.numeric(b2_array[,,i]))[floor(0.05*h*w)])
+  b3_array_st[,,i] <- (b3_array[,,i] - matrix(rep(median(b2_array[,,i]), h*w), ncol = w))/ 
+    (sort(as.numeric(b3_array[,,i]))[floor(0.95*h*w)] - sort(as.numeric(b3_array[,,i]))[floor(0.05*h*w)])
+  b4_array_st[,,i] <- (b4_array[,,i] - matrix(rep(median(b4_array[,,i]), h*w), ncol = w))/ 
+    (sort(as.numeric(b4_array[,,i]))[floor(0.95*h*w)] - sort(as.numeric(b4_array[,,i]))[floor(0.05*h*w)])
+}
+```
+
+```{r}
+# Making an array of the mean of the 3 bands over time, mainly for visualization purposes
+mean_band_array_st <- array(NA, dim = c(h, w, leng))
+for(i in 1:leng){
+  mean_band_array_st[,,i] <- (b2_array_st[,,i] + b3_array_st[,,i] + b4_array_st[,,i])/ 3
+}
+```
+
+```{r, eval = F}
+# This code makes plots showing the presence of the seasonality is somewhat diminished after this standardization
+image_means_st <- c()
+for(i in 1:leng){
+  image_means_st <- c(image_means_st, mean(mean_band_array_st[,,i]))
+}
+
+image_vars_st <- c()
+for(i in 1:leng){
+  image_vars_st <- c(image_vars_st, var(as.numeric(mean_band_array_st[,,i])))
+}
+
+# The data is still has some seasonality present, but it's effect is not marked 
+#plot(image_means_st)
+#plot(image_vars_st)
+```
+
+# Logistic Regression Model
+
+Below we fit pixel-wise logistic regression model for the standardized bands as 3 covariates and the label array as the observed pixel values:
+
+```{r, warning =F}
+set.seed(1234)
+# Pixe-wise logistic model for each time segment, for all the data. 
+leng <- dim(label_array)[3]
+logfit_array_st <- array(data = NA, dim = c(h,w,leng))
+for(i in 1:h){
+for(j in 1:w){
+  df <- as.data.frame(cbind(label_array[i,j,], b2_array_st[i,j,],
+                            b3_array_st[i,j,], b4_array_st[i,j,]))
+  colnames(df) <- c("Y", "x1", "x2", "x3")
+  log_fitted <- glm(Y ~ x1 + x2 + x3, data = df, family = "binomial")$fitted.values
+  logfit_array_st[i,j,] <- log_fitted
+  
+}
+}
+
+# Adding a minuscule amount of noise/level shift, to account for cases where the model predicts a 0 probability 
+# of construction for the entirety of the series
+for(i in 1:h){
+  for(j in 1:w){
+    for(k in 1:leng){
+      logfit_array_st[i,j,k] <- logfit_array_st[i,j,k] + rnorm(1, mean = 0.01, sd = 0.001)
+    }
+  }
+}
+```
+
+```{r, eval = F}
+for(i in 1:leng){
+  heatmap.2(logfit_array_st[,,i], dendrogram='none', Rowv=FALSE,
+            Colv=FALSE,trace='none', main = i) 
+}
+```
+
+Flattening the array for implementation with competing algorithms:
+
+```{r}
+flat_logfit <- matrix(NA, nrow = h*w, ncol = leng)
+for(k in 1:leng)
+for(i in 1:h){
+  for(j in 1:w){
+    index <- (i-1)*w + j
+    flat_logfit[index, k] <- logfit_array_st[i,j,k]
+  }
+}
+```
+
+# Multiple Change Detection
+
+We have decided to use a seeded binary segmentation scheme for multiple changepoint analysis, since the binary segmentation often biases against certain changes being detected, especially if they are near to other change-ppoints.  Using seeded binary segmentation, we can somewhat mitigate the masking effects like this which linger in binary segmentation.  The method runs changepoint a deterministic set of time ranges which get incrementally smaller and smaller, and then used a greedy selection procedure as described in their paper to extract changepoints from this output. Paper:
+
+https://academic.oup.com/biomet/article/110/1/249/6747166#SEC2.3
+
+**Function to generate intervals**
+
+I use the below function to generate intervals to test over, which was taken from the Github of associated with the paper that introduced the method:
+
+```{r}
+# The function from their Github which generates seeded intervals
+seeded.intervals <- function(n, decay = sqrt(2), unique.int = F){
+	n	<- as.integer(n)
+	depth	<- log(n, base = decay)
+	depth	<- ceiling(depth)
+	M	<- sum(2^(1:depth)-1)
+	
+	boundary_mtx           <- matrix(NA, ncol = 2)
+	colnames(boundary_mtx) <- c("st", "end")
+	boundary_mtx[1, ]      <- c(1, n)
+
+	depth	<- log(n, base = decay)
+	depth	<- ceiling(depth)
+
+
+    for(i in 2:depth){
+		int_length	<- n * (1/decay)^(i-1)
+		
+	    	n_int		<- ceiling(round(n/int_length, 14))*2-1		# sometimes very slight numerical inaccuracies
+	    	
+	    	boundary_mtx	<- rbind(boundary_mtx,
+			    			cbind(floor(seq(1, n-int_length, length.out = (n_int))), 
+						    	ceiling(seq(int_length, n, length.out = (n_int)))))
+    }
+
+	if(unique.int){return(unique(boundary_mtx))}
+	boundary_mtx
+}
+```
+
+*Greedy Selection Function*
+
+We've written a function to, based on input from the seeded binary segmentation algorithm, chooses change-point estimates via a greedy selection method exactly as described in Kovacs et al (2023).
+
+```{r}
+greedy_selection <- function(timepoints, statistics, p_val_threshold, interval_matrix, p_vals){
+  sort_stats <- sort(statistics, decreasing = T)
+  selected_cps <- c()
+  intervals_left <- 1:nrow(interval_matrix)
+  
+  # Iterating through all tests, in order of the size of the statistic
+  for(i in 1:length(sort_stats)){
+          if(length(intervals_left) == 0){break}
+    # The first changepoint found is always one which will be selected
+    if(i == 1 && p_vals[1] < p_val_threshold){
+      new_cp <- timepoints[which(statistics == sort_stats[1])]
+      new_cp <- new_cp[1]
+      selected_cps <- c(selected_cps, new_cp)
+      new_intervals_left <- c()
+      
+      # If the changepoint is selected, we remove all intervals tested on including that time-point
+      for(j in intervals_left){
+             # print(new_cp)
+        if(between(new_cp, interval_matrix[j,1], interval_matrix[j,2])==F){
+          new_intervals_left <- c(new_intervals_left, j)
+        }
+      }
+      intervals_left <- new_intervals_left
+    }
+    
+    if(i > 1 && p_vals[i] < p_val_threshold){
+      cp_index <- which(statistics == sort_stats[i])[1]
+      new_cp <- timepoints[which(statistics == sort_stats[i])]
+      new_cp <- new_cp
+      if(cp_index %in% intervals_left){
+        selected_cps <- c(selected_cps, new_cp)
+        # If the changepoint is selected, we remove all intervals tested on including that time-point
+        new_intervals_left <- c()
+        for(j in intervals_left){
+        if(between(new_cp, interval_matrix[j,1], interval_matrix[j,2])==F){
+          new_intervals_left <- c(new_intervals_left, j)
+        }
+        }
+      intervals_left <- new_intervals_left
+      }
+      
+    }
+  }
+  return(selected_cps)
+}
+```
+
+**Seeded Binary Segmentation on ABCD, for Multiple Change Detection**
+
+Below, we generate seeded binary segmentation intervals, only looking at intervals with a length of 30 or greater, to lessen the number of false positives:
+
+```{r}
+seeded.ints <- seeded.intervals(leng,) # This function produced the seeded intervals we use
+ints_m30 <- seeded.ints[1:70,]
+```
+
+First, I've performed the segmentation on ABCD and gSeg, which is just a special case of ABCD where P_1 = c(1), P_2 = c(1).
+
+```{r}
+# Storing output for ABCD
+seed_cps <- c()
+seed_stats <- c()
+seed_inds <- list()
+seed_cols <- list()
+max_blocks_at_change <- list()
+max_stats_at_change <- list()
+p_values <- c()
+
+# Storing output for original gSeg
+orig_seed_cps <- c()
+orig_seed_stats <- c()
+orig_seed_inds <- list()
+orig_seed_cols <- list()
+orig_max_blocks_at_change <- list()
+orig_max_stats_at_change <- list()
+orig_p_values <- c()
+```
+
+Seeded binary segmentation trials for ABCD and gSeg, with a permutation p-value computed for each trial with B = 1000.
+
+```{r}
+for(i in 1:70){
+  start <- as.numeric(ints_m30[i,1])
+  end <- as.numeric(ints_m30[i,2])
+  range <- start:end
+  
+  test <- ABCD_img(logfit_array_st[,,range], k = floor(0.2*(length(range))), perm.p = T, B = 1000, 
+                  P_1_grid = c(1, 4, 8, 16), P_2_grid = c(1, 6, 12, 24)) # using a wide range of block sizes
+  # print(test$tauhat_max)
+  p_values <- c(p_values, test$p_val)
+  # print(test$p_val)
+  seed_cps <- c(seed_cps, test$tauhat_max + start - 1)
+  seed_stats <- c(seed_stats, test$test_stat)
+  seed_cols[[i]] <-  test$tauhat_cols
+  seed_inds[[i]] <- test$tauhat_inds
+  max_stats_at_change[[i]] <- test$max_stats_at_change
+  max_blocks_at_change[[i]] <- test$max_blocks_at_change
+  
+  orig_test <- ABCD_img(logfit_array_st[,,range], k = floor(0.2*(length(range))), perm.p = T, B = 1000, 
+                   P_1_grid = c(1), P_2_grid = c(1))
+  orig_p_values <- c(orig_p_values, orig_test$p_val)
+  # print(orig_test$tauhat_max)
+  # print(orig_test$p_val)
+  orig_seed_cps <- c(orig_seed_cps, orig_test$tauhat_max + start - 1)
+  orig_seed_stats <- c(orig_seed_stats, orig_test$test_stat)
+  orig_seed_cols[[i]] <- orig_test$tauhat_cols
+  orig_seed_inds[[i]]<- orig_test$tauhat_inds
+  orig_max_stats_at_change[[i]] <- orig_test$max_stats_at_change
+  orig_max_blocks_at_change[[i]] <- orig_test$max_blocks_at_change
+}
+```
+
+Seeded binary segmentation for Double CUSUM and Inspect, along with a permutation-based p-value for each, with a permutation p-value computed for each trial with B = 1000.
+
+```{r,eval=F}
+ins_ps <- c()
+dc_ps <- c()
+```
+
+```{r,eval=F}
+for(i in 1:70){
+  start_thing <- as.numeric(ints_m30[i,1])
+  end_thing <- as.numeric(ints_m30[i,2])
+  range <- start_thing:end_thing
+  dc_stats <- c()
+  ins_stats <- c()
+  for(j in 1:1000){
+    flat_logfit_perm <- flat_logfit[,sample(range, length(range))]
+    dc_test <- factorcpt::func_dc(flat_logfit_perm)
+    ins_test <-  InspectChangepoint::locate.change(flat_logfit_perm)
+    dc_stats <- c(dc_stats, max(dc_test$res))
+    ins_stats <- c(ins_stats, ins_test$cusum)
+    print(j)
+  }# using a wide range of block sizes
+  dc_ps <- c(dc_ps, length(which(dc_stats > dc_seed_stats[i]))/1000 + 0.001)
+    ins_ps <- c(ins_ps, length(which(ins_stats > inspect_seed_stats[i]))/1000 + 0.001)
+  #run 1000 permuted Double CUSUM tests, compare statistic to the original
+}
+
+#write.csv(dc_ps, "~/Desktop/dc_ps_ABCD.csv")
+#write.csv(ins_ps, "~/Desktop/ins_ps_ABCD.csv")
+```
+
+Reading in saved permutation p-values for all of the tests . . .
+
+```{r}
+dc_ps <- as.numeric(read.csv("~/Desktop/dc_ps_ABCD.csv")$x)
+
+ins_ps <- as.numeric(read.csv("~/Desktop/ins_ps_ABCD.csv")$x)
+
+ABCD_ps <- as.numeric(read.csv("~/Desktop/ABCD_ps.csv")$x)
+
+orig_ps <-  as.numeric(read.csv("~/Desktop/orig_ps_ABCD.csv")$x)
+```
+
+```{r}
+dc_seed_cps <- c()
+dc_seed_stats <- c()
+inspect_seed_cps <- c()
+inspect_seed_stats <- c()
+```
+
+```{r}
+# Version of code without p-values generated
+for(i in 1:70){
+  start_thing <- as.numeric(ints_m30[i,1])
+  end_thing <- as.numeric(ints_m30[i,2])
+  range <- start_thing:end_thing
+  dc_test <- factorcpt::func_dc(flat_logfit[,range]) # using a wide range of block sizes
+  dc_cp <- which.max(dc_test$res)
+  dc_stat <- max(dc_test$res)
+  #print(dc_cp + start_thing-1)
+  
+  dc_seed_cps <- c(dc_seed_cps, dc_cp + start_thing - 1)
+  dc_seed_stats <- c(dc_seed_stats, dc_stat)
+
+  inspect_test <- InspectChangepoint::locate.change(flat_logfit[,range])
+  inspect_cp <- inspect_test$changepoint
+  inspect_stat <- inspect_test$cusum
+ # print(inspect_cp + start_thing-1)
+  inspect_seed_cps <- c(inspect_seed_cps, inspect_cp + start_thing - 1)
+  inspect_seed_stats <- c(inspect_seed_stats, inspect_stat)
+  print(i)
+}
+```
+
+---
+
+# Multiple Change-point results
+
+Below, we determine the significant change-points (at level alpha = 0.01) for each method using the greedy selection function from above:
+
+```{r}
+range <- 1:70 
+# ABCD change-points
+greedy_cps <- greedy_selection(timepoints = seed_cps[range], statistics = seed_stats[range],
+                               p_val_threshold = 0.01, interval_matrix = seeded.ints[range,], p_vals = ABCD_ps)
+
+# gSeg change-points change-points
+orig_greedy_cps<- greedy_selection(timepoints = orig_seed_cps[range], statistics = orig_seed_stats[range],
+                 p_val_threshold = 0.01, interval_matrix = seeded.ints[range,], p_vals = orig_ps)
+```
+
+```{r}
+# Double CUSUM 
+dc_greedy_cps <- greedy_selection(timepoints = dc_seed_cps[range], statistics = dc_seed_stats[range],
+                    p_val_threshold = 0.01, interval_matrix = seeded.ints[range,], p_vals = dc_ps)
+
+# Inspect change-points
+inspect_greedy_cps <- greedy_selection(timepoints = inspect_seed_cps[range], statistics = inspect_seed_stats[range],
+                         p_val_threshold = 0.01, interval_matrix = seeded.ints[range,], p_vals = ins_ps)
+```
+
+```{r}
+# Chronologically sorted change-points for each method
+sort(greedy_cps)
+sort(orig_greedy_cps)
+sort(dc_greedy_cps)
+sort(inspect_greedy_cps)
+```
+
+```{r}
+# Sorted by magnitude of test statistic
+greedy_cps
+orig_greedy_cps
+dc_greedy_cps
+inspect_greedy_cps
+```
+
+# Changepoint Validation 
+
+To visualize the facility over time, I took the log of the average of the robustly standardized bands, and then set NA values to be a negative value, -10 to be specific.  This in a sense filters the data and leaves only the "hotspots" of the image, and doing this we can pretty clearly see this region get filled in.  We know this is what is being detected, as the block with the maximum statistic in both blocking structures contains this region.
+
+```{r}
+# Storing the block rows and block columns for each blocking structure in ABCD used for the test
+block_rows <- list()
+block_cols <- list()
+block_rows[[1]] <- breaks_1d(112, 1)
+block_rows[[2]] <- breaks_1d(112, 4)
+block_rows[[3]] <- breaks_1d(112, 8)
+block_rows[[4]] <- breaks_1d(112, 16)
+
+block_cols[[1]] <- breaks_1d(211, 1)
+block_cols[[2]] <- breaks_1d(211, 6)
+block_cols[[3]] <- breaks_1d(211, 12)
+block_cols[[4]] <- breaks_1d(211, 24)
+```
+
+*Plots for Found Change-points*
+The below code plots generates heat-maps of average log of observation values before and after change-points occur, in the overall image as well as in a specific block where the change-point signal was strongest:
+
+```{r, warning = F}
+  sorted <- sort(greedy_cps)
+for(i in 1:length(sorted)){
+  change_est <- sorted[i]
+  # Printing the date
+  dates[change_est]
+  # Finding the index of the test which found this change initially
+  test_ind <- which(seed_cps == change_est)[1]
+
+  # Finding which structure and associated block row/column with the maximum statistic for the change-point estimate
+  max_struct <- which.max(max_stats_at_change[[test_ind]])
+  max_block <- max_blocks_at_change[[test_ind]][which.max(max_stats_at_change[[test_ind]]), ]
+  block_row_temp <- block_rows[[max_struct]][max_block[1]:(max_block[1] + 1)]
+  block_col_temp <- block_cols[[max_struct]][max_block[2]:(max_block[2] + 1)]
+  print(i)
+  #print(row_locs[block_row_temp])
+ # print(col_locs[block_col_temp])
+  block_row_temp[2] <- block_row_temp[2] - 1
+  block_col_temp[2] <- block_col_temp[2] - 1
+  
+  # Finding the pixel row and column which the maximum block starts/ends
+  block_row_start <- block_row_temp[1]
+  block_row_end <- block_row_temp[2]
+  block_col_start <-  block_col_temp[1]
+  block_col_end <- block_col_temp[2]
+#  print(c(block_row_start, block_row_end, block_col_start, block_col_end))
+  
+  # Setting a range of dates to look at before/after a potential change, defaulting to 10 observations before/after
+    if((change_est-9) < 1){ 
+    before_range <- 1:change_est
+  } else {
+  before_range <- (change_est-9):change_est}
+  if((change_est + 10) > 335){
+    after_range <- (change_est+1):335
+  } else {
+  after_range <- (change_est+1):(change_est+10)}
+  
+# Code used to instantly save output ...
+#url_before_full <- paste(paste(paste("/Users/alanmoore/Desktop/supp_figs/natanz_images/before_full_images/",
+#                         as.character(change_est), sep = ""), dates[change_est], sep = "_"), ".png", sep = "")
+#png(url_before_full, width=700, height=405, res=300)
+  
+par(mar = c(2.5,2.5,2.5,2.5))
+mat_before_full <- log(apply(mean_band_array_st[,, before_range], c(1,2), mean))
+mat_before_full[is.na(mat_before_full)] <- -10
+mat_before_full[is.infinite(mat_before_full)] <- -10
+figure_before_full <- heatmap.2(mat_before_full, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none',
+          symm=F,symkey=F,symbreaks=T, scale="none", breaks=seq(-10, 5.75, length.out=100), 
+          col = bluered(99), sepcolor="black", key = F,labRow = FALSE, labCol = FALSE, margin=c(0.001, 0.001),
+          rowsep =  c(block_row_temp[1]-1, block_row_temp[2]), colsep = block_col_temp,
+          lwid = c(0.001, 7.5), lhei= c(0.001, 7.5),
+          main = NULL)#paste("Mean of 10 obs. pre/post change at t=", as.character(change_est), sep = ""),)
+figure_before_full 
+#dev.off()
+
+# Code used to instantly save output ...
+#url_after_full <- paste(paste(paste("/Users/alanmoore/Desktop/supp_figs/natanz_images/after_full_images/",
+#                         as.character(change_est), sep = ""), dates[change_est], sep = "_"), ".png", sep = "")
+#png(url_after_full, width=700, height=405, res=300)
+
+par(mar = c(2.5,2.5,2.5,2.5))
+mat_after_full <- log(apply(mean_band_array_st[,, after_range], c(1,2), mean))
+mat_after_full[is.na(mat_after_full)] <- -10
+mat_after_full[is.infinite(mat_after_full)] <- -10
+figure_after_full <- heatmap.2(mat_after_full, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none',
+          symm=F,symkey=F,symbreaks=T, scale="none", breaks=seq(-10, 5.75, length.out=100),
+          col = bluered(99), sepcolor="black", key = F, labRow = FALSE, labCol = FALSE, margin=c(0.001, 0.001),
+          rowsep = c(block_row_temp[1]-1, block_row_temp[2]), colsep = block_col_temp,
+          lwid = c(0.001, 7.5), lhei= c(0.001, 7.5),
+          main = NULL) #paste("Mean of 10 obs. pre/post change, t=", as.character(change_est), sep = ""))
+#dev.off()
+
+# Code used to instantly save output ...
+#url_before <- paste(paste(paste("/Users/alanmoore/Desktop/supp_figs/natanz_images/before_block_images/",
+#                         as.character(change_est), sep = ""), dates[change_est], sep = "_"), ".png", sep = "")
+#png(url_before, width=700, height=405, res=300)
+
+#par(mar = c(0,0,0,0))
+par(mar = c(2.5,2.5,2.5,2.5))
+mat_before <- log(apply(mean_band_array_st[block_row_start:block_row_end,
+                                           block_col_start:block_col_end, before_range], c(1,2), mean))
+mat_before[is.na(mat_before)] <- -10
+mat_before[is.infinite(mat_before)] <- -10
+figure_before <- heatmap.2(mat_before, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none', 
+          col = bluered(99),sepcolor="black", key = F, labRow = FALSE, labCol = FALSE, margin=c(0.001, 0.001),
+          symm=F,symkey=F,symbreaks=T, scale="none", breaks=seq(-10, 5.75, length.out=100),
+          lwid = c(0.001, 7.5), lhei= c(0.001, 7.5),
+          main = NULL)#paste("Mean of 10 obs. pre/post change, t=", as.character(change_est), sep = ""))
+figure_before
+#dev.off()
+
+# Code used to instantly save output ...
+#url_after <- paste(paste(paste("/Users/alanmoore/Desktop/supp_figs/natanz_images/after_block_images/",
+#                         as.character(change_est), sep = ""), dates[change_est], sep = "_"), ".png", sep = "")
+#png(url_after, width=700, height=405, res=300)
+
+par(mar = c(2.5,2.5,2.5,2.5))
+mat_after <- log(apply(mean_band_array_st[block_row_start:block_row_end, 
+                                           block_col_start:block_col_end, after_range], c(1,2), mean))
+mat_after[is.na(mat_after)] <- -10
+mat_after[is.infinite(mat_after)] <- -10
+figure_after <- heatmap.2(mat_after, dendrogram='none', Rowv=FALSE, Colv=FALSE,trace='none',
+          col = bluered(99), sepcolor="black", key = F, labRow = FALSE, labCol = FALSE, margin=c(0.001, 0.001),
+            symm=F,symkey=F,symbreaks=T, scale="none", breaks=seq(-10, 5.75, length.out=100),
+           lwid = c(0.001, 7.5), lhei= c(0.001, 7.5),
+          main = NULL#
+            #paste("Mean of 10 obs. pre/post change, t= ", as.character(change_est), sep = "")
+          )
+figure_after
+#dev.off()
+}
+```
+
+
