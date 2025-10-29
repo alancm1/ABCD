@@ -28,6 +28,8 @@ install_github("alancm/ABCD")
 
 ### Reproducing Simulations
 
+Within the folder sim_app_files, one may find .R scripts and R Markdown files which can be used to reproduce simulations found in sections 4 and 5 of the associated paper.
+
 The file "abcd_sim_helpers_s.R" contains helper functions to run the simulations found in section 4.1. Additional dependencies for this R script include the R packages MASS, InspectChangepoint, factorcpt (found here: https://github.com/markov10000/factorcpt) and ggplot2.
 
 The file "image_sim_helpers_s.R" contains helper functions to run the simulations found in section 4.2. Dependencies for this R script include the R packages MASS, RSatscan and L2HDChange, along with having the SaTScan software installed on your computer (a Windows machine is recommended for this).
