@@ -1,0 +1,221 @@
+---
+title: "ABCD_paper_examples"
+author: "Alan Moore"
+date: "2024-06-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Package dependencies for this .Rmd:
+library(ade4) # for mstree (k-mst) 
+library(gSeg) # original graph-based test package
+library(MASS)
+library(SimDesign) # Allows suppression of messages from gSeg
+library(extrafont) # Used to tweak plot label
+```
+
+The goal of this file is to re-create visuals and smaller showing the process of how our method attempts to detect changes that are seen in the manuscript. This includes generating figures for the high-dimensional example at the end of Section 3 of the paper, as well as the k-MST plots and mini simulation comparison with gSeg found in Section 2.
+
+```{r}
+# Reading in R script including main ABCD functions ... 
+# May alternatively load the R package ABCD
+#source("~/abcd_fns_clean_s.R")
+```
+
+---
+
+**Figures for high-dimensional example**
+
+Let's $\textbf{y}$ be a high-dimensional time series with $n = 100$ observations of dimension $d = 500$, and we have no knowledge about the alternative structure apart from the change occurring in a cluster of dimensions.  In this case, we can choose a range of block structures $P = (1, 4, 10, 20)$, and all of these numbers of blocks conveniently divide $500$ with no remainder.  Let's assume that we have a change in mean of the first $50$ dimensions of the time series at time $t = 50$, with magnitude $\delta = 0.25$.  In this case, the blocking structure where  either $P = 10$ should be  the best blocking structures suited to detect this change, since the size of each block for $P = 10$ is equal to the actual size of the cluster of changed dimensions.  We set $k = 20$ based on this being $n/5$, which we have noticed in simulations to be optimal for power of the test for smaller values of $n$.  We will visualize the procedure to get a scan vector for the blocking structure $P = 20$.
+
+```{r}
+set.seed(123)
+test_mat <- matrix(data = rnorm(50000), ncol = 500)
+test_mat[51:100,1:50] <- test_mat[51:100,1:50] + sqrt(3/50)
+```
+
+```{r}
+n = 100
+scan_list <- list()
+blocknums <- c(1, 4, 10, 20)
+for(i in 1:length(blocknums)){
+  blocknum <- blocknums[i]
+  blocksize <- 500/blocknum
+  starts <- seq(1, (500 - blocksize + 1), by = blocksize)
+ends <- seq(blocksize, 500, by = blocksize)
+blocks <- list()
+for(j in 1:blocknum){
+  blocks[[j]] <- test_mat[,starts[j]:ends[j]]
+  }
+
+scans <- matrix(NA, ncol = blocknums[i], nrow = 100)
+for(j in 1:blocknum){
+test <- SimDesign::quiet(gseg1(n, E = kmst(blocks[[j]], k = 20), statistics = "w"))
+scans[,j] <- test$scanZ$weighted$Zw}
+
+scan_list[[i]] <- scans
+}
+```
+
+The plots generated below show the scan statistic vectors for each blocking structure, and the vector for maximum at each time point within each blocking structure.  Notice we can see that $P = 10$ has the largest signal of a change within a block at $t= 50$, which is what we expected.
+
+```{r}
+par(mfrow = c(2,2), family = "serif")
+par(mar = c(3.5,3.5,2,1), mgp = c(2,0.5,0))
+max_vec_mat <- matrix(data = NA, nrow = 100, ncol = 4)
+titles <- c(bquote('P'[1]~" = 1 Scan Statistics"), bquote("P"[2]~ " = 4 Scan Statistics"),
+            bquote("P"[3]~ " = 10 Scan  Statistics"), bquote("P"[4]~ " = 20 Scan Statistics"))
+maxtitles <- c("P[1] = 1 Max Vector", "P[2] = 4 Max Vector", "P[3] = 10 Max Vector", "P[4] = 20 Max Vector")
+for(i in 1:4){
+  if(i == 1){
+   plot(1:100,scan_list[[i]][,1], type = "l", ylim = c(-3, 10), ylab = bquote("M"[j]~"(t)"), xlab = "Time",
+    main = titles[i])
+       max_vec_mat[,i]<- apply(scan_list[[i]], MAR = 1, FUN = max)  
+      lines(1:100, apply(scan_list[[i]], MAR = 1, FUN = max), type = "l", lwd = 3, lty = 3,
+       col = "red", ylim = c(-3, 10), xlab = "Time", ylab = "Max Scan Value Across Blocks", main = maxtitles[i])
+  } else {
+  plot(1:100,scan_list[[i]][,1], type = "l", ylim = c(-3, 10),
+      main = titles[i], ylab = bquote("M"[j]~"(t)"), xlab = "Time")}
+  if(blocknums[i] == 1){
+    
+  } else {
+      for(j in 2:blocknums[i]){
+  lines(scan_list[[i]][,j])
+      }
+   max_vec_mat[,i]<- apply(scan_list[[i]], MAR = 1, FUN = max)  
+  lines(1:100, apply(scan_list[[i]], MAR = 1, FUN = max), type = "l", lwd = 3, lty = 3,
+       col = "red",
+       ylim = c(-3, 10), xlab = "Time", ylab = "", yaxt = "n", main = maxtitles[i])}
+}
+```
+
+The figure below shows how we average over the maximum vectors for each blocking structure to get a final changepoint estimate:
+
+```{r}
+par(family = "serif")
+plot(1:100, apply(max_vec_mat, MAR = 1, FUN = mean), type = "l", lwd = 3.5,
+     ylim = c(-3, 10), xlab = "Time", col = 'blue', ylab = "Scan Value")
+for(i in 1:4){
+  lines(1:100, max_vec_mat[,i], col = "red", lwd = 2, lty = 3)
+}
+abline(v = 50, lty = 2)
+text(x=65.7, y=9.5, 'Changepoint Estimate')
+```
+
+The change-point estimate:
+
+```{r}
+which.max(apply(max_vec_mat, MAR = 1, FUN = mean)[6:95]) + 5 # correcting for first n_1 -1 = 5 observations
+```
+
+---
+
+**Graph-based Test plot (Beta case)**
+
+Below, we re-create the plot found in Section 2 of the manuscript, displaying how edges are labeled in a graph-based change-point test:
+
+```{r}
+# An R script for generating the plots
+source("~/Downloads/plotgraph.r")
+```
+
+Below is the code for the specific figure seen in the paper:
+
+```{r, fig.width = 7, fig.height = 7}
+set.seed(142)
+par(mfrow = c(2,2), mar = c(1.5,1.5,1.5,1.5))
+n = 25
+d = 2
+k = 1
+nL = 15
+nR = 10
+
+
+params2 <- c(3, 3)
+
+y1 = matrix(0,nL,d)
+y2 = matrix(0,nR,d)
+for (i in 1:nL) y1[i,] = rbeta(2, 2, 4)
+for (i in 1:nR) y2[i,] = rbeta(2, 4, 2)
+y = rbind(y1,y2)
+E = kmst(y, k=k)
+
+plotgraph(y,E,t=5)
+plotgraph(y,E,t= 10)
+plotgraph(y,E,t=15)
+plotgraph(y,E,t=20)
+```
+
+---
+
+*Code for test comparing gSeg with ABCD in Section 2*
+
+The following code runs a small simulation to compare ABCD against gSeg when a clustered change becomes more and more sparse in a high-dimensional Normal time series. Each method uses a permutation p-value with $B = 1000$.
+
+```{r, eval = F}
+ests_mat_gSeg <- matrix(NA, nrow = 100, ncol = 6)
+pvals_mat_gSeg <- matrix(NA, nrow = 100, ncol = 6)
+ests_mat_ABCD <- matrix(NA, nrow = 100, ncol = 6)
+pvals_mat_ABCD <- matrix(NA, nrow = 100, ncol = 6)
+
+set.seed(1234)
+n <- 500 # length of series
+d <- 1000 # dimension
+chpt <- 250
+sparsity <- c(1000, 500, 200, 100, 50, 10)
+for(j in 1:6){
+if(j == 1){
+    start <- 1
+ } else {
+   start <- 1
+  }
+  n_dims <- sparsity[j]
+  mu_mag <- sqrt(1/sparsity[j]) # change in mean for a single dimension based on total number of dimensions changing
+  for(i in start:100){
+  y <- matrix(rnorm(d*n, sd = 1), ncol = 1000, byrow= T) # generating a d = 1000, N = 500 standard multivariate normal series
+  if(n_dims == 1000){
+      y[(chpt+1):n, ] <- rnorm(sparsity[j]*(n-chpt), mean = mu_mag, sd = 1.05) 
+      # adding change in mean and variance at t = 250, special case if change is dense
+  } else {
+      y[(chpt+1):n, 1:n_dims] <- rnorm((n_dims)*(n-chpt), mean = mu_mag, sd = 1.05) 
+      # adding change in mean and variance at t = 250
+  }
+  test_orig <- quiet(gseg1(n, E = kmst(y, k = 50), statistics = "m",
+                           pval.perm = T, B = 1000, pval.appr = F))
+  pvals_mat_gSeg[i,j] <- test_orig$pval.perm$max.type$pval
+  ests_mat_gSeg[i,j]<- test_orig$scanZ$max.type$tauhat
+  test <- ABCD(y, k = 50, P_grid = c(1, 4, 10, 20, 40), B = 1000, perm.p = T)
+  pvals_mat_ABCD[i,j] <- test$p_val
+  ests_mat_ABCD[i,j]<- test$tauhat_max
+  print(test_orig$scanZ$max.type$tauhat)
+  print(test_orig$pval.perm$max.type$pval)
+  print(test$tauhat_max)
+  print(test$p_val)
+  }
+}
+```
+
+```{r, eval=F}
+# Code to aggregate number of significant change-points found for each method
+gSeg_sig_mat <- matrix(NA, nrow = 100, ncol = 6)
+ABCD_sig_mat <- matrix(NA, nrow = 100, ncol = 6)
+for(j in 1:6){
+  for(i in 1:100){
+    gSeg_p <- pvals_mat_gSeg[i,j]
+    gSeg_sig_mat[i,j] <- ifelse(gSeg_p < 0.05, 1, 0)
+    
+    ABCD_p <- pvals_mat_ABCD[i,j]
+    ABCD_sig_mat[i,j] <- ifelse(ABCD_p < 0.05, 1, 0)
+  }
+}
+
+results_tbl <- rbind(colSums(gSeg_sig_mat), colSums(ABCD_sig_mat))
+#results_tbl
+```
+
+
+

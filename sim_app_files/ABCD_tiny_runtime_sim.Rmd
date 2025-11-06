@@ -1,0 +1,42 @@
+---
+title: "Untitled"
+author: "Alan Moore"
+date: "2025-10-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Reading in R script including main ABCD functions ... 
+# May alternatively load the R package ABCD
+#source("~/abcd_fns_clean_s.R")
+```
+
+```{r}
+# Generating 100 image time series, with no change-point...
+list_of_dfs <- list()
+for(k in 1:100){
+df <- array(data = NA, dim = c(60,60, 100))
+for(i in 1:60){
+  for(j in 1:60){
+    df[i,j,] <- rnorm(100)
+  }
+}
+list_of_dfs[[k]] <- df
+}
+
+```
+
+```{r}
+start <- Sys.time()
+for(i in 1:100){
+  test <- ABCD_img(list_of_dfs[[i]], k = 20, P_1_grid = c(1,4, 10, 15),
+                   P_2_grid = c(1, 4, 10, 15), perm.p = T, B = 500)
+}
+end <- Sys.time()
+avg_time_taken <- (end-start)/1
+print(avg_time_taken)
+```
