@@ -37,3 +37,5 @@ The file "image_sim_helpers_s.R" contains helper functions to run the simulation
 The R Markdown file "simulation_testing_s.Rmd" includes code chunks to generate null Monte Carlo test statistics for each data type in section 4.1, as well as to run the full simulations found in Section 4.1 and 4.2 of the paper. This file requires the helper scripts listed above to be loaded.
 
 The R Markdown file "data_app_clean.Rmd" includes code analyzing for change-points in the Natanz nuclear facility data application. Many external packages are required to actually run this code, along with the substantial remote sensing and construction polygon data.
+
+The R Markdown file "ABCD_paper_examples.Rmd" includes code for re-creating figures seen in Sections 2 and 3, as well as the small comparison between gSeg and ABCD in Section 2.  The file "ABCD_tiny_runtime_sim.Rmd" includes code to re-create the simulation quantifying ABCD's average runtime for a boilerplate example.
